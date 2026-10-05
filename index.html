@@ -21,7 +21,7 @@
     <div class="tabs"><button id="tabLogin" class="active">Iniciar sesión</button><button id="tabRegister">Crear cuenta</button></div>
     <form id="loginForm"><div class="field"><label>Correo</label><input id="loginEmail" type="email" required placeholder="estudiante@correo.cl"></div><div class="field"><label>Contraseña</label><input id="loginPass" type="password" required></div><button class="primary">Entrar</button><button type="button" id="forgot" class="link">¿Olvidaste tu contraseña?</button></form>
     <form id="registerForm" class="hidden"><div class="field"><label>Nombre y apellido</label><input id="regName" required></div><div class="field"><label>Correo</label><input id="regEmail" type="email" required></div><div class="field"><label>Curso</label><select id="regGrade"><option>7° básico</option><option>8° básico</option></select></div><div class="field"><label>Contraseña (mínimo 8 caracteres)</label><input id="regPass" type="password" minlength="8" required></div><button class="primary">Crear cuenta y avatar</button></form>
-    <p class="note">Demo local: los datos se guardan solo en este navegador. Para uso escolar real, conecta un backend seguro (por ejemplo Firebase/Supabase) para autenticación, recuperación de contraseña y resultados compartidos.</p>
+    <p class="note"><strong>Firebase:</strong> esta versión está preparada para autenticación, recuperación de contraseña, ranking y progreso compartido. Antes de publicarla, pega tu configuración de Firebase en el bloque <code>firebaseConfig</code> del código.</p>
   </section>
 
   <main id="app" class="hidden">
@@ -34,13 +34,46 @@
 
     <section id="profile" class="view hidden"><div class="card"><h2>🎨 Crea tu avatar</h2><p class="sub">Elige el personaje que te acompañará durante la aventura.</p><div id="avatarGrid" class="avatarGrid"></div><button id="saveAvatar" class="primary" style="max-width:260px">Guardar avatar</button></div></section>
 
-    <section id="teacher" class="view hidden"><div id="teacherGate" class="card teacherGate"><h2>🔐 Acceso profesor</h2><p class="sub">Panel protegido para revisar resultados individuales.</p><div class="field"><label>Clave docente</label><input id="teacherPass" type="password" placeholder="Clave demo: profe2026"></div><button id="teacherLogin" class="primary">Acceder al panel</button></div><div id="teacherPanel" class="card teacher hidden"><div class="bar"><div><h2>📊 Panel del profesor</h2><p class="sub">Resultados individuales, progreso y promedio.</p></div><input id="studentSearch" class="search" placeholder="Buscar estudiante..."></div><table><thead><tr><th>Estudiante</th><th>Curso</th><th>Avatar</th><th>Niveles</th><th>Aciertos</th><th>Promedio</th><th>XP</th></tr></thead><tbody id="teacherBody"></tbody></table></div></section>
+    <section id="teacher" class="view hidden"><div id="teacherGate" class="card teacherGate"><h2>🔐 Acceso profesor</h2><p id="teacherGateMsg" class="sub">Este panel solo se habilita para correos docentes autorizados en la configuración.</p><button id="teacherLogin" class="primary">Verificar acceso docente</button></div><div id="teacherPanel" class="card teacher hidden"><div class="bar"><div><h2>📊 Panel del profesor</h2><p class="sub">Resultados individuales, progreso y promedio guardados en Firestore.</p></div><input id="studentSearch" class="search" placeholder="Buscar estudiante..."></div><table><thead><tr><th>Estudiante</th><th>Curso</th><th>Avatar</th><th>Niveles</th><th>Aciertos</th><th>Promedio</th><th>XP</th></tr></thead><tbody id="teacherBody"></tbody></table></div></section>
 
     <section id="game" class="view hidden"><div class="card gameBox"><button id="backHome" class="link">← Volver a mundos</button><div id="gameMeta" class="pill"></div><h2 id="gameTitle"></h2><div id="question" class="q"></div><div id="answers" class="answers"></div><div id="feedback" class="feedback hidden"></div><button id="nextQ" class="primary hidden">Siguiente</button></div></section>
   </main>
   <div class="footer">MathQuest • Prototipo educativo interactivo para 7° y 8° básico</div>
 </div>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
 <script>
+/* ================================================================
+   CONFIGURACIÓN FIREBASE
+   1) Firebase Console > Configuración del proyecto > Tus apps > Web
+   2) Copia los valores y reemplaza los textos PEGA_AQUI...
+   3) En Authentication habilita Email/Password.
+   4) En Firestore crea la base de datos y pega las reglas indicadas
+      al final de este archivo.
+   ================================================================ */
+const firebaseConfig = {
+  apiKey: "PEGA_AQUI_TU_API_KEY",
+  authDomain: "PEGA_AQUI_TU_AUTH_DOMAIN",
+  projectId: "PEGA_AQUI_TU_PROJECT_ID",
+  storageBucket: "PEGA_AQUI_TU_STORAGE_BUCKET",
+  messagingSenderId: "PEGA_AQUI_TU_MESSAGING_SENDER_ID",
+  appId: "PEGA_AQUI_TU_APP_ID"
+};
+
+// Agrega aquí los correos de los profesores que podrán abrir el panel docente.
+const TEACHER_EMAILS = [
+  "profesor@tucolgio.cl"
+];
+
+const firebaseReady = !Object.values(firebaseConfig).some(v => String(v).includes('PEGA_AQUI'));
+let auth=null, db=null;
+if(firebaseReady){
+  firebase.initializeApp(firebaseConfig);
+  auth=firebase.auth();
+  db=firebase.firestore();
+}
+
 const $=s=>document.querySelector(s), $$=s=>document.querySelectorAll(s);
 const avatars=['🦊','🐼','🐯','🐸','🦄','🐲','🤖','👾','🧙‍♀️','🧙‍♂️','🦉','🐙'];
 const worlds=[
@@ -51,35 +84,157 @@ const worlds=[
  {id:'fun',emoji:'📈',title:'Montaña de Funciones',desc:'Plano cartesiano, función lineal y afín, pendiente y gráficos.',qs:[['En y=3x+2, la pendiente es…',['2','3','−3','5'],1],['¿Qué función pasa por (0,0) y tiene pendiente 4?',['y=x+4','y=4x','y=4x+4','y=−4x'],1],['En y=−2x+5, la ordenada al origen es…',['−2','2','5','−5'],2],['Pendiente entre (1,2) y (3,6):',['1','2','3','4'],1],['Una recta con pendiente negativa es…',['creciente','decreciente','horizontal','vertical'],1]]},
  {id:'data',emoji:'🎲',title:'Isla de Datos y Azar',desc:'Tablas, gráficos, media, probabilidad y experimentos aleatorios.',qs:[['Media de 4, 6 y 8:',['5','6','7','18'],1],['Probabilidad de obtener cara en moneda justa:',['0','1/4','1/2','1'],2],['En un dado, P(obtener 6)=',['1/2','1/3','1/6','6'],2],['La mediana de 2,3,7,9,12 es…',['3','7','9','6.6'],1],['Un gráfico de barras sirve principalmente para…',['comparar categorías','resolver ecuaciones','medir ángulos','factorizar'],0]]}
 ];
-let current=null, game=null, selectedAvatar='🦊';
-function users(){try{return JSON.parse(localStorage.getItem('mq_users')||'[]')}catch{return []}} function saveUsers(u){localStorage.setItem('mq_users',JSON.stringify(u))}
+let current=null, game=null, selectedAvatar='🦊', rankingCache=[], teacherCache=[];
 function esc(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
-
-function seed(){if(!users().length) saveUsers([{name:'Sofía Demo',email:'sofia@demo.cl',pass:'12345678',grade:'8° básico',avatar:'🦄',xp:430,correct:18,total:20,completed:['num','alg','prop']},{name:'Mateo Demo',email:'mateo@demo.cl',pass:'12345678',grade:'7° básico',avatar:'🤖',xp:350,correct:15,total:18,completed:['num','alg']}])} seed();
-function toast(t){$('#toast').textContent=t;$('#toast').classList.remove('hidden');setTimeout(()=>$('#toast').classList.add('hidden'),2200)}
+function toast(t){$('#toast').textContent=t;$('#toast').classList.remove('hidden');setTimeout(()=>$('#toast').classList.add('hidden'),2600)}
 function setTab(reg){$('#loginForm').classList.toggle('hidden',reg);$('#registerForm').classList.toggle('hidden',!reg);$('#tabLogin').classList.toggle('active',!reg);$('#tabRegister').classList.toggle('active',reg)}
-$('#tabLogin').onclick=()=>setTab(false);$('#tabRegister').onclick=()=>setTab(true);
-$('#registerForm').onsubmit=e=>{e.preventDefault();let u=users(),email=$('#regEmail').value.trim().toLowerCase();if(u.some(x=>x.email===email))return toast('Ese correo ya está registrado');let nu={name:$('#regName').value.trim(),email,pass:$('#regPass').value,grade:$('#regGrade').value,avatar:'🦊',xp:0,correct:0,total:0,completed:[]};u.push(nu);saveUsers(u);current=nu;sessionStorage.setItem('mq_email',email);openApp();showView('profile')}
-$('#loginForm').onsubmit=e=>{e.preventDefault();let email=$('#loginEmail').value.trim().toLowerCase(),u=users().find(x=>x.email===email&&x.pass===$('#loginPass').value);if(!u)return toast('Correo o contraseña incorrectos');current=u;sessionStorage.setItem('mq_email',email);openApp()}
-$('#forgot').onclick=()=>{let email=prompt('Ingresa tu correo registrado:');let u=users().find(x=>x.email===String(email).trim().toLowerCase());if(!u)return toast('No encontramos ese correo');alert('DEMO LOCAL\nTu contraseña guardada en este navegador es: '+u.pass+'\n\nEn la versión online se enviaría un enlace seguro de recuperación al correo.')}
-function sync(){let u=users(),i=u.findIndex(x=>x.email===current.email);u[i]=current;saveUsers(u)}
-function openApp(){ $('#auth').classList.add('hidden');$('#app').classList.remove('hidden');$('#nav').classList.remove('hidden');render() }
-function showView(id){$$('.view').forEach(v=>v.classList.add('hidden'));$('#'+id).classList.remove('hidden');$$('#nav button[data-view]').forEach(b=>b.classList.toggle('active',b.dataset.view===id));if(id==='ranking')renderRank();if(id==='teacher'&&!$('#teacherPanel').classList.contains('hidden'))renderTeacher();}
-$$('#nav button[data-view]').forEach(b=>b.onclick=()=>showView(b.dataset.view));$('#logout').onclick=()=>{sessionStorage.removeItem('mq_email');location.reload()};$('#backHome').onclick=()=>{game=null;showView('home')};
-function avg(u){return u.total?Math.round(u.correct/u.total*100):0} function category(x){return x>=600?'Diamante':x>=400?'Oro':x>=200?'Plata':'Bronce'} function xpProgress(x){if(x>=600)return 100;let base=x>=400?400:x>=200?200:0;return Math.max(0,Math.min(100,Math.round((x-base)/200*100)))}
-function render(){if(!current)return;$('#hello').textContent='¡Hola, '+current.name.split(' ')[0]+'!';$('#heroName').textContent=current.name;$('#heroGrade').textContent=current.grade;$('#heroAvatar').textContent=current.avatar;$('#xpVal').textContent=current.xp;$('#avgVal').textContent=avg(current)+'%';$('#doneVal').textContent=current.completed.length;$('#catVal').textContent=category(current.xp);$('#xpBar').style.width=xpProgress(current.xp)+'%';renderWorlds();renderAvatars();renderRank()}
-function renderWorlds(){let unlock=Math.min(worlds.length,1+current.completed.length);$('#worlds').innerHTML=worlds.map((w,i)=>`<div class="card world ${i>=unlock?'locked':''}"><div class="emoji">${w.emoji}</div><h3>${w.title}</h3><p>${w.desc}</p><div class="levels">${[1,2,3,4,5].map((n,j)=>`<span class="dot ${current.completed.includes(w.id)?'done':j===0&&i<unlock?'current':''}">${current.completed.includes(w.id)?'✓':n}</span>`).join('')}</div><button ${i>=unlock?'disabled':''} onclick="startGame('${w.id}')">${current.completed.includes(w.id)?'Repetir desafío':'Jugar nivel'}</button></div>`).join('')}
-window.startGame=id=>{let w=worlds.find(x=>x.id===id);game={w,index:0,score:0,answered:false};showView('game');renderQuestion()}
+$('#tabLogin').onclick=()=>setTab(false); $('#tabRegister').onclick=()=>setTab(true);
+function avg(u){return u.total?Math.round((u.correct/u.total)*100):0}
+function category(x){return x>=600?'Diamante':x>=400?'Oro':x>=200?'Plata':'Bronce'}
+function xpProgress(x){if(x>=600)return 100;let base=x>=400?400:x>=200?200:0;return Math.max(0,Math.min(100,Math.round((x-base)/200*100)))}
+function isTeacherEmail(email){return TEACHER_EMAILS.map(x=>x.toLowerCase()).includes(String(email||'').toLowerCase())}
+function assertFirebase(){if(firebaseReady)return true;toast('Primero pega tu configuración de Firebase en firebaseConfig');return false}
+
+$('#registerForm').onsubmit=async e=>{
+  e.preventDefault(); if(!assertFirebase())return;
+  const name=$('#regName').value.trim(), email=$('#regEmail').value.trim().toLowerCase(), pass=$('#regPass').value, grade=$('#regGrade').value;
+  try{
+    const cred=await auth.createUserWithEmailAndPassword(email,pass);
+    current={uid:cred.user.uid,name,email,grade,avatar:'🦊',xp:0,correct:0,total:0,completed:[],role:isTeacherEmail(email)?'teacher':'student',createdAt:firebase.firestore.FieldValue.serverTimestamp()};
+    await db.collection('users').doc(cred.user.uid).set(current);
+    await db.collection('leaderboard').doc(cred.user.uid).set(publicProfile(current));
+    openApp(); showView('profile'); toast('Cuenta creada correctamente');
+  }catch(err){toast(firebaseMessage(err))}
+};
+
+$('#loginForm').onsubmit=async e=>{
+  e.preventDefault(); if(!assertFirebase())return;
+  try{await auth.signInWithEmailAndPassword($('#loginEmail').value.trim().toLowerCase(),$('#loginPass').value)}
+  catch(err){toast(firebaseMessage(err))}
+};
+
+$('#forgot').onclick=async()=>{
+  if(!assertFirebase())return;
+  const email=prompt('Ingresa el correo de tu cuenta:'); if(!email)return;
+  try{await auth.sendPasswordResetEmail(email.trim().toLowerCase());toast('Enviamos un enlace para recuperar tu contraseña')}
+  catch(err){toast(firebaseMessage(err))}
+};
+
+function firebaseMessage(err){
+  const code=err?.code||'';
+  const map={'auth/email-already-in-use':'Ese correo ya está registrado','auth/invalid-email':'El correo no es válido','auth/weak-password':'La contraseña debe tener al menos 6 caracteres','auth/invalid-credential':'Correo o contraseña incorrectos','auth/user-not-found':'No encontramos una cuenta con ese correo','auth/too-many-requests':'Demasiados intentos. Intenta nuevamente más tarde','permission-denied':'No tienes permiso para acceder a esos datos'};
+  console.error(err); return map[code]||'Ocurrió un error. Revisa la configuración de Firebase.';
+}
+
+async function loadCurrentUser(user){
+  const ref=db.collection('users').doc(user.uid);
+  let snap=await ref.get();
+  if(!snap.exists){
+    current={uid:user.uid,name:user.displayName||user.email.split('@')[0],email:user.email,grade:'7° básico',avatar:'🦊',xp:0,correct:0,total:0,completed:[],role:isTeacherEmail(user.email)?'teacher':'student'};
+    await ref.set(current);
+  }else{current={uid:user.uid,...snap.data()}}
+  current.completed=Array.isArray(current.completed)?current.completed:[];
+  openApp();
+}
+
+function publicProfile(u){return {name:u.name,grade:u.grade,avatar:u.avatar||'🦊',xp:u.xp||0,correct:u.correct||0,total:u.total||0,completed:u.completed||[],role:u.role||'student',updatedAt:firebase.firestore.FieldValue.serverTimestamp()}}
+async function sync(){
+  if(!current||!db)return;
+  const clean={name:current.name,email:current.email,grade:current.grade,avatar:current.avatar,xp:current.xp,correct:current.correct,total:current.total,completed:current.completed,role:current.role||'student',updatedAt:firebase.firestore.FieldValue.serverTimestamp()};
+  await Promise.all([
+    db.collection('users').doc(current.uid).set(clean,{merge:true}),
+    db.collection('leaderboard').doc(current.uid).set(publicProfile(current),{merge:true})
+  ]);
+}
+
+function openApp(){$('#auth').classList.add('hidden');$('#app').classList.remove('hidden');$('#nav').classList.remove('hidden');render()}
+async function showView(id){
+  $$('.view').forEach(v=>v.classList.add('hidden')); $('#'+id).classList.remove('hidden');
+  $$('#nav button[data-view]').forEach(b=>b.classList.toggle('active',b.dataset.view===id));
+  if(id==='ranking')await renderRank();
+  if(id==='teacher')await checkTeacherAccess(false);
+}
+$$('#nav button[data-view]').forEach(b=>b.onclick=()=>showView(b.dataset.view));
+$('#logout').onclick=async()=>{if(auth)await auth.signOut();location.reload()};
+$('#backHome').onclick=()=>{game=null;showView('home')};
+
+function render(){
+  if(!current)return; $('#hello').textContent='¡Hola, '+current.name.split(' ')[0]+'!'; $('#heroName').textContent=current.name; $('#heroGrade').textContent=current.grade; $('#heroAvatar').textContent=current.avatar; $('#xpVal').textContent=current.xp||0; $('#avgVal').textContent=avg(current)+'%'; $('#doneVal').textContent=current.completed.length; $('#catVal').textContent=category(current.xp||0); $('#xpBar').style.width=xpProgress(current.xp||0)+'%'; renderWorlds(); renderAvatars();
+}
+function renderWorlds(){
+  let unlock=Math.min(worlds.length,1+current.completed.length);
+  $('#worlds').innerHTML=worlds.map((w,i)=>`<div class="card world ${i>=unlock?'locked':''}"><div class="emoji">${w.emoji}</div><h3>${w.title}</h3><p>${w.desc}</p><div class="levels">${[1,2,3,4,5].map((n,j)=>`<span class="dot ${current.completed.includes(w.id)?'done':j===0&&i<unlock?'current':''}">${current.completed.includes(w.id)?'✓':n}</span>`).join('')}</div><button ${i>=unlock?'disabled':''} onclick="startGame('${w.id}')">${current.completed.includes(w.id)?'Repetir desafío':'Jugar nivel'}</button></div>`).join('');
+}
+window.startGame=id=>{let w=worlds.find(x=>x.id===id);game={w,index:0,score:0,answered:false};showView('game');renderQuestion()};
 function renderQuestion(){let [q,ans]=game.w.qs[game.index];$('#gameMeta').textContent=`${game.w.emoji} Nivel ${game.index+1} de ${game.w.qs.length}`;$('#gameTitle').textContent=game.w.title;$('#question').textContent=q;$('#answers').innerHTML=ans.map((a,i)=>`<button onclick="answer(${i})">${String.fromCharCode(65+i)}. ${a}</button>`).join('');$('#feedback').classList.add('hidden');$('#nextQ').classList.add('hidden');game.answered=false}
-window.answer=i=>{if(game.answered)return;game.answered=true;let correct=game.w.qs[game.index][2];current.total++;if(i===correct){current.correct++;current.xp+=20;game.score++;$('#feedback').className='feedback good';$('#feedback').textContent='✓ ¡Correcto! +20 XP'}else{$('#feedback').className='feedback wrong';$('#feedback').textContent='✗ Aún no. La respuesta correcta era '+game.w.qs[game.index][1][correct]};$('#feedback').classList.remove('hidden');sync();$('#nextQ').classList.remove('hidden')}
-$('#nextQ').onclick=()=>{game.index++;if(game.index<game.w.qs.length)return renderQuestion();if(game.score>=3&&!current.completed.includes(game.w.id)){current.completed.push(game.w.id);current.xp+=50;sync();toast('¡Mundo superado! Bonus +50 XP')}else toast('Desafío terminado: '+game.score+'/'+game.w.qs.length);render();showView('home')}
-function renderRank(){let sorted=users().sort((a,b)=>avg(b)-avg(a)||b.xp-a.xp);$('#rankBody').innerHTML=sorted.map((u,i)=>`<tr><td class="medal">${['🥇','🥈','🥉'][i]||i+1}</td><td>${esc(u.avatar)} ${esc(u.name)}</td><td>${esc(u.grade)}</td><td><strong>${avg(u)}%</strong></td><td>${u.xp}</td></tr>`).join('')}
-function renderAvatars(){selectedAvatar=current.avatar;$('#avatarGrid').innerHTML=avatars.map(a=>`<button class="${a===selectedAvatar?'sel':''}" onclick="pickAvatar('${a}')">${a}</button>`).join('')}
-window.pickAvatar=a=>{selectedAvatar=a;renderAvatars()};$('#saveAvatar').onclick=()=>{current.avatar=selectedAvatar;sync();render();toast('Avatar guardado')}
-$('#teacherLogin').onclick=()=>{if($('#teacherPass').value!=='profe2026')return toast('Clave docente incorrecta');$('#teacherGate').classList.add('hidden');$('#teacherPanel').classList.remove('hidden');renderTeacher()}
-function renderTeacher(){let term=($('#studentSearch').value||'').toLowerCase();$('#teacherBody').innerHTML=users().filter(u=>u.name.toLowerCase().includes(term)||u.email.includes(term)).map(u=>`<tr><td><strong>${esc(u.name)}</strong><br><small class="sub">${esc(u.email)}</small></td><td>${esc(u.grade)}</td><td>${esc(u.avatar)}</td><td>${u.completed.length}/${worlds.length}</td><td>${u.correct}/${u.total}</td><td>${avg(u)}%</td><td>${u.xp}</td></tr>`).join('')}
-$('#studentSearch').oninput=renderTeacher;
-let remembered=sessionStorage.getItem('mq_email');if(remembered){current=users().find(x=>x.email===remembered);if(current)openApp()}
+window.answer=async i=>{
+  if(game.answered)return; game.answered=true; const correct=game.w.qs[game.index][2]; current.total=(current.total||0)+1;
+  if(i===correct){current.correct=(current.correct||0)+1;current.xp=(current.xp||0)+20;game.score++;$('#feedback').className='feedback good';$('#feedback').textContent='✓ ¡Correcto! +20 XP'}
+  else{$('#feedback').className='feedback wrong';$('#feedback').textContent='✗ Aún no. La respuesta correcta era '+game.w.qs[game.index][1][correct]}
+  $('#feedback').classList.remove('hidden'); try{await sync()}catch(e){console.error(e);toast('No se pudo guardar el progreso')} $('#nextQ').classList.remove('hidden');
+};
+$('#nextQ').onclick=async()=>{game.index++;if(game.index<game.w.qs.length)return renderQuestion();if(game.score>=3&&!current.completed.includes(game.w.id)){current.completed.push(game.w.id);current.xp=(current.xp||0)+50;await sync();toast('¡Mundo superado! Bonus +50 XP')}else toast('Desafío terminado: '+game.score+'/'+game.w.qs.length);render();showView('home')};
+
+async function fetchUsers(){
+  if(!db)return []; const snap=await db.collection('users').get(); return snap.docs.map(d=>({uid:d.id,...d.data()})).filter(u=>(u.role||'student')==='student');
+}
+async function renderRank(){
+  if(!assertFirebase())return; $('#rankBody').innerHTML='<tr><td colspan="5">Cargando ranking…</td></tr>';
+  try{const snap=await db.collection('leaderboard').get();rankingCache=snap.docs.map(d=>({uid:d.id,...d.data()})).filter(u=>(u.role||'student')==='student');rankingCache.sort((a,b)=>avg(b)-avg(a)||(b.xp||0)-(a.xp||0));$('#rankBody').innerHTML=rankingCache.map((u,i)=>`<tr><td class="medal">${['🥇','🥈','🥉'][i]||i+1}</td><td>${esc(u.avatar||'🙂')} ${esc(u.name)}</td><td>${esc(u.grade)}</td><td><strong>${avg(u)}%</strong></td><td>${u.xp||0}</td></tr>`).join('')||'<tr><td colspan="5">Aún no hay participantes.</td></tr>'}catch(e){console.error(e);$('#rankBody').innerHTML='<tr><td colspan="5">No se pudo cargar el ranking.</td></tr>'}
+}
+function renderAvatars(){selectedAvatar=current.avatar||'🦊';$('#avatarGrid').innerHTML=avatars.map(a=>`<button class="${a===selectedAvatar?'sel':''}" onclick="pickAvatar('${a}')">${a}</button>`).join('')}
+window.pickAvatar=a=>{selectedAvatar=a;renderAvatars()};
+$('#saveAvatar').onclick=async()=>{current.avatar=selectedAvatar;await sync();render();toast('Avatar guardado')};
+
+async function checkTeacherAccess(showToast=true){
+  const allowed=current && (current.role==='teacher'||isTeacherEmail(current.email));
+  if(!allowed){$('#teacherGate').classList.remove('hidden');$('#teacherPanel').classList.add('hidden');$('#teacherGateMsg').textContent='Tu cuenta no está autorizada como profesor. Agrega este correo a TEACHER_EMAILS y configura las reglas de Firestore.';if(showToast)toast('Esta cuenta no tiene acceso docente');return}
+  $('#teacherGate').classList.add('hidden');$('#teacherPanel').classList.remove('hidden');await renderTeacher();
+}
+$('#teacherLogin').onclick=()=>checkTeacherAccess(true);
+async function renderTeacher(){
+  if(!(current&&(current.role==='teacher'||isTeacherEmail(current.email))))return;
+  $('#teacherBody').innerHTML='<tr><td colspan="7">Cargando estudiantes…</td></tr>';
+  try{teacherCache=await fetchUsers();filterTeacher()}catch(e){console.error(e);$('#teacherBody').innerHTML='<tr><td colspan="7">No se pudieron cargar los resultados. Revisa las reglas de Firestore.</td></tr>'}
+}
+function filterTeacher(){const term=($('#studentSearch').value||'').toLowerCase();const rows=teacherCache.filter(u=>(u.name||'').toLowerCase().includes(term)||(u.email||'').toLowerCase().includes(term));$('#teacherBody').innerHTML=rows.map(u=>`<tr><td><strong>${esc(u.name)}</strong><br><small class="sub">${esc(u.email)}</small></td><td>${esc(u.grade)}</td><td>${esc(u.avatar||'🙂')}</td><td>${(u.completed||[]).length}/${worlds.length}</td><td>${u.correct||0}/${u.total||0}</td><td>${avg(u)}%</td><td>${u.xp||0}</td></tr>`).join('')||'<tr><td colspan="7">Sin resultados.</td></tr>'}
+$('#studentSearch').oninput=filterTeacher;
+
+if(firebaseReady){
+  auth.onAuthStateChanged(async user=>{
+    if(user){try{await loadCurrentUser(user)}catch(e){console.error(e);toast('No se pudo cargar el perfil desde Firestore')}}
+    else{current=null;$('#auth').classList.remove('hidden');$('#app').classList.add('hidden');$('#nav').classList.add('hidden')}
+  });
+}else{
+  console.warn('MathQuest: Firebase aún no está configurado. Completa firebaseConfig.');
+}
 </script>
+<!--
+REGLAS FIRESTORE RECOMENDADAS (Firebase Console > Firestore > Reglas)
+Reemplaza los correos docentes por los mismos de TEACHER_EMAILS.
+
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() { return request.auth != null; }
+    function isTeacher() {
+      return signedIn() && request.auth.token.email in [
+        'profesor@tucolgio.cl'
+      ];
+    }
+    match /users/{userId} {
+      allow create: if signedIn() && request.auth.uid == userId;
+      allow read: if signedIn() && (request.auth.uid == userId || isTeacher());
+      allow update: if signedIn() && request.auth.uid == userId;
+      allow delete: if isTeacher();
+    }
+    match /leaderboard/{userId} {
+      allow read: if signedIn();
+      allow create, update: if signedIn() && request.auth.uid == userId;
+      allow delete: if isTeacher();
+    }
+  }
+}
+-->
 </body>
 </html>
